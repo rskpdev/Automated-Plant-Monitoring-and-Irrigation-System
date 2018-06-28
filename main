@@ -1,0 +1,245 @@
+/***************************************************************************
+ *             Automated Plant Monitoring and Irrigation System 
+ *
+ *  April 2017, Microprocessors And Interfacing
+ *  
+ *  Arduino code to monitor the temperature, moisture, and light of a plant
+ *  and display the readings to the user. The readings are taken once at 
+ *  startup and then periodically every set interval of time. During low 
+ *  light conditions the grow light will on taking into account the amount
+ *  of light required for the plant per day.
+ *
+ ***************************************************************************/
+
+#include <LiquidCrystal.h>      
+
+/*variables for sensor pins*/
+const int buttonPin = 7;
+const int tempSensor = A5;      
+const int lightSensor = A4;     
+const int moistSensor = 8;
+const int lightPin = 0; 
+const int waterPin = 1;       
+
+const long interval = 1;      /*interval between sensor readings in minutes*/ 
+const int lightTime = 480;    /*amount of light required for plants in minutes per day*/
+int light_threshold = 500;    /*value above which get_light returns true*/
+int waterPlant = 0;
+
+unsigned long previousTime = 0;   /*time the previous interval started*/
+unsigned long startTime = 0;      /*time of start of day*/
+int lightRemaining = lightTime;   /*amount of light time remaining for the plant for the day*/
+
+/*value of sensor readings*/
+int lightVal = 0;         /*boolean*/
+int moistVal = 0;         /*boolean*/
+int tempVal = 0;          /*degrees celsius*/
+
+int prevButtonState = LOW;
+int currentButtonState = HIGH;
+int buttonPushCounter = 0;
+
+/*Setting up the lcd*/
+LiquidCrystal lcd(12, 11, 5, 4, 3, 2);  
+
+ 
+/*
+ * Function: get_temp
+ * ----------------------------
+ *  Reads the temperature sensor four times with a delay of 
+ *  three seconds. Discards the first reading and returns
+ *  the average of the remaining three readings
+ *
+ *  returns: temperature in celsius
+ */
+int get_temp(){
+  int vout = 0;
+  float sum = 0,output = 0;
+
+  analogRead(tempSensor);     /*discard first reading*/
+  delay(3000);
+  
+  for (int i = 0; i < 3; ++i)
+    {
+      vout = analogRead(tempSensor);
+      output = ((float)vout / 1023.0) * 500;
+      sum = sum + output;
+      delay(3000);
+    }
+
+  vout = sum / 3.0;
+  return vout;
+}
+
+
+/*
+ * Function: get_light
+ * ----------------------------
+ *  Reads the light sensor three times with a delay of 
+ *  three seconds. Takes the average of the three 
+ *  readings and returns 1 if light is above a 
+ *  certain value and 0  otherwise
+ *
+ *  returns: 1 or 0 depending on amount of light
+ */
+int get_light(){
+  int vout = 0;
+  for (int i = 0; i < 3; ++i)
+    {
+      vout += analogRead(lightSensor);
+      delay(3000);
+    }
+  vout = vout / 3;
+  if (vout < light_threshold) {
+    return 0;
+  }
+  else {
+    return 1;
+  }
+}
+
+
+/*
+ * Function: get_moisture
+ * ----------------------------
+ *  Readsthe moisture sensor which is active low.
+ *
+ *  returns: 1 or 0 depending on amount of moisture
+ */
+int get_moisture(){
+  return !digitalRead(moistSensor);
+}
+
+/*Display drivers*/
+void printTitle(char* stringToPrint){
+  lcd.setCursor(1,0);
+  lcd.print(stringToPrint);
+}
+
+/*Display drivers*/
+void printValue(int intToPrint){
+  lcd.setCursor(1,1);
+  lcd.print(intToPrint);
+}
+
+
+void setup() {
+  lcd.begin(16,2);
+  
+  /*initialize sensors*/
+  pinMode(tempSensor,INPUT);    
+  pinMode(lightSensor,INPUT);
+  pinMode(moistSensor,INPUT); 
+  pinMode(buttonPin, INPUT);
+  pinMode(lightPin,OUTPUT);
+  pinMode(waterPin,OUTPUT);
+  digitalWrite(lightPin,LOW);
+  digitalWrite(waterPin,LOW);
+
+  /*Onboard LED turns on and Display blanks when sensors are being read*/
+  pinMode(13,OUTPUT);
+  digitalWrite(13,HIGH);
+  lcd.noDisplay();
+
+  /*first sensor readings*/
+  moistVal = get_moisture();
+  lightVal = get_light();
+  tempVal = get_temp();
+  digitalWrite(13,LOW);
+  lcd.display();
+
+  /*set start of day and initialize previous time*/
+  startTime = (millis()/60000); 
+  previousTime = startTime;
+  
+  //Serial.begin(9600);
+}
+
+
+void loop() {
+  
+  /*set current time*/
+  unsigned long currentTime = (millis()/60000); 
+
+  /*run if statement once at the begining of every interval*/
+  if(currentTime - previousTime >= interval){
+    previousTime = currentTime;
+    digitalWrite(13,HIGH);
+    lcd.noDisplay();
+
+    waterPlant = 0;
+    moistVal = get_moisture(); 
+    if(moistVal == 0){
+      waterPlant = 1;
+    }
+
+    digitalWrite(lightPin,LOW);
+    lightVal = get_light();
+
+    /*if sun is out and plant still needs more light decrease lightRemaining*/
+    if(lightVal == 1 && lightRemaining >= 0){     
+      lightRemaining = lightRemaining - interval;
+    }
+    /*if sun is not out and plant still needs more light turn on light and then decrease lightRemaining */
+    else if(lightVal == 0 && lightRemaining >= 0){
+      digitalWrite(lightPin,HIGH);
+      lightRemaining = lightRemaining - interval;
+    }
+
+    tempVal = get_temp();
+
+    digitalWrite(13,LOW);
+    lcd.display();
+    currentTime = (millis()/60000);
+  }
+
+  /*display data controled by button */
+  currentButtonState = digitalRead(buttonPin);
+
+  if(currentButtonState != prevButtonState){
+    if(currentButtonState == HIGH){
+      buttonPushCounter++;
+      delay(50);
+      lcd.clear();            
+    }
+  }
+
+  switch(buttonPushCounter%3){
+    case 0:
+      printTitle("Temperature");
+      printValue(tempVal);
+      break;
+    case 1:
+      printTitle("Light");
+      printValue(lightVal);
+      break;
+    case 2:
+      printTitle("Moisture");
+      printValue(moistVal);
+      break;  
+  }
+
+  prevButtonState = currentButtonState;
+
+  if(waterPlant){
+    moistVal = get_moisture(); 
+    if(moistVal == 0){
+      waterPlant = 1;
+      digitalWrite(waterPin,HIGH);
+    }
+    else{
+      waterPlant = 0;
+      digitalWrite(waterPin,LOW);
+    }
+    
+  }
+  
+
+  /*at the end of the day reset start time and light remaining*/
+  if(currentTime - startTime >= 1440){
+    startTime = currentTime;
+    lightRemaining = lightTime;
+  }
+
+}
+
